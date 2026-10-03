@@ -2,9 +2,26 @@
 
 A simple PCB defect-localization project using classical image processing with Python and OpenCV. It compares each defective PCB image with its aligned defect-free reference, highlights changed regions, and compares detected boxes with the dataset annotations. No machine-learning or deep-learning model is used.
 
+## Get the Project
+
+Clone this repository and enter the project folder:
+
+```powershell
+git clone https://github.com/rooparr7776/pcb_defect_detector.git
+cd pcb_defect_detector
+```
+
 ## Dataset
 
-The project expects the extracted dataset at `DeepPCB-master/PCBData/`. Each sample is organized as:
+The dataset is required to run the detector and is **not included in this repository**. Obtain DeepPCB from the [original project](https://github.com/tangsanli5201/DeepPCB) and, following its terms, extract or copy its `PCBData` folder into this project's `DeepPCB-master` folder. The default location should be:
+
+```text
+pcb_defect_detector/
+  DeepPCB-master/
+    PCBData/
+```
+
+Each sample inside `PCBData` is organized as:
 
 ```text
 PCBData/
@@ -18,6 +35,8 @@ PCBData/
 
 The annotation rows contain `x1 y1 x2 y2 class_id`. The scripts discover image pairs and matching annotation files from the extracted folders.
 
+The dataset's documentation restricts its use to research purposes. Do not commit or push the dataset; this repository ignores `DeepPCB-master/PCBData/`.
+
 ## Install
 
 From the project folder, install the required packages:
@@ -25,6 +44,8 @@ From the project folder, install the required packages:
 ```powershell
 python -m pip install opencv-python numpy matplotlib streamlit
 ```
+
+If you put `PCBData` somewhere else, provide its path to the command-line program with `--data-root`. In the web app, enter the path in the **PCBData folder** field in the sidebar.
 
 ## View Results in the Browser
 
