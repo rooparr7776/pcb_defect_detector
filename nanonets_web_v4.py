@@ -5,7 +5,7 @@ from pathlib import Path
 import cv2
 import pandas as pd
 import streamlit as st
-import pcb_core as core
+import pcb_core_ as core
 
 st.set_page_config(page_title='PCB Inspection V4', layout='wide')
 ROOT = Path(__file__).resolve().parent
