@@ -2,3 +2,5 @@ __pycache__/
 *.py[cod]
 DeepPCB-master/PCBData/
 .venv/
+NanoNetsPCBChecker.zip
+*.zip

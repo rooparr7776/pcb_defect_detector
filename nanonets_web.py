@@ -415,6 +415,7 @@ def inspect_components(
     edge_threshold,
     rotation_threshold,
     padding,
+    enable_rotation_heuristic,
 ):
     results = []
 
@@ -487,36 +488,41 @@ def inspect_components(
         else:
             angle_delta = None
 
-        suspicious_appearance = (
-            ssim_score < ssim_threshold
-            and difference_ratio > difference_threshold
-            and edge_ratio > edge_threshold
-        )
-
+        # A large image difference alone does not prove a component is missing.
+        # This is a heuristic candidate rule, to be validated on more images.
         suspected_rotation = (
-            angle_delta is not None
+            enable_rotation_heuristic
+            and angle_delta is not None
             and angle_delta >= rotation_threshold
         )
 
+        missing_candidate = (
+            ssim_score < ssim_threshold
+            and difference_ratio >= difference_threshold
+            and not suspected_rotation
+        )
+
+        appearance_anomaly = (
+            ssim_score < ssim_threshold
+            and edge_ratio > edge_threshold
+            and not missing_candidate
+            and not suspected_rotation
+        )
+
         if suspected_rotation:
-            status = "ROTATION CANDIDATE"
-
-        elif suspicious_appearance:
-            status = "SUSPECTED DEFECT"
-
+            status = "ROTATION CANDIDATE (EXPERIMENTAL)"
+            color = (255, 165, 0)
+        elif missing_candidate:
+            status = "MISSING CANDIDATE (HEURISTIC)"
+            color = (255, 0, 0)
+        elif appearance_anomaly:
+            status = "APPEARANCE ANOMALY"
+            color = (255, 0, 255)
         else:
-            status = "NORMAL"
-
-        x1, y1, x2, y2 = bbox
-
-        if status == "NORMAL":
+            status = "NO STRONG CHANGE"
             color = (0, 255, 0)
 
-        elif status == "ROTATION CANDIDATE":
-            color = (255, 165, 0)
-
-        else:
-            color = (255, 0, 0)
+        x1, y1, x2, y2 = bbox
 
         cv2.rectangle(
             overlay,
@@ -613,13 +619,13 @@ def evaluate_results(
     predicted_missing = {
         name
         for name, status in predictions.items()
-        if status == "SUSPECTED DEFECT"
+        if status == "MISSING CANDIDATE (HEURISTIC)"
     }
 
     predicted_rotated = {
         name
         for name, status in predictions.items()
-        if status == "ROTATION CANDIDATE"
+        if status == "ROTATION CANDIDATE (EXPERIMENTAL)"
     }
 
     return {
@@ -669,11 +675,10 @@ def binary_metrics(actual, predicted):
 # ============================================================
 
 
-st.title("PCB Component Inspection — NanoNets")
+st.title("PCB Component Inspection — Classical Image Processing")
 st.caption(
-    "Classical image processing: ROI comparison, "
-    "SSIM, edge differences, and contour geometry. "
-    "No ML/DL model is used."
+    "ECC alignment, ROI comparison, SSIM, thresholded differences, "
+    "edge analysis, and optional experimental contour orientation. No ML/DL model is used."
 )
 
 with st.sidebar:
@@ -690,12 +695,23 @@ images = find_dataset_images(dataset_root)
 
 if not images:
     st.error(
-        "No images with matching XML annotations were found. "
-        "Check the dataset folder path and ensure the original "
-        "images and XML files are present."
+        "No original images with matching XML annotations were found. "
+        "Select the outer DLAssignment folder containing the nested dataset folder. "
+        "Do not select the errors folder; those are marked-up visualizations."
     )
-
     st.stop()
+
+st.info(
+    f"Found {len(images)} original image/XML pair(s). "
+    "Images under errors/ are excluded. Only annotated pairs can be evaluated "
+    "against XML ground truth."
+)
+if len(images) < 3:
+    st.warning(
+        "Only a very small number of annotated samples were found. "
+        "You can demonstrate the pipeline, but cannot establish reliable "
+        "generalization from two annotated images."
+    )
 
 image_lookup = {
     str(path): path
@@ -741,11 +757,15 @@ with st.sidebar:
     )
 
     difference_threshold = st.slider(
-        "Difference ratio threshold",
+        "Missing-candidate changed-pixel ratio",
         min_value=0.0,
         max_value=1.0,
-        value=0.10,
+        value=0.20,
         step=0.01,
+        help=(
+            "A candidate requires low SSIM and a changed-pixel ratio above this value. "
+            "This is a heuristic, not proof that the component is missing."
+        ),
     )
 
     edge_threshold = st.slider(
@@ -756,12 +776,22 @@ with st.sidebar:
         step=0.01,
     )
 
+    enable_rotation_heuristic = st.checkbox(
+        "Enable experimental contour-based rotation candidates",
+        value=False,
+        help=(
+            "Disabled by default because component markings and symmetric shapes "
+            "can make contour-angle estimates unreliable."
+        ),
+    )
+
     rotation_threshold = st.slider(
         "Rotation angle threshold (degrees)",
         min_value=5,
         max_value=90,
         value=25,
         step=1,
+        disabled=not enable_rotation_heuristic,
     )
 
     padding = st.slider(
@@ -805,6 +835,22 @@ if not reference_components:
     st.error("The reference image has no valid component annotations.")
     st.stop()
 
+reference_rotated_flags = [
+    component["name"] for component in reference_components
+    if component["rotated"] == 1
+]
+if len(reference_components) != 60 or reference_rotated_flags:
+    st.warning(
+        f"Reference check: {len(reference_components)} annotated components and "
+        f"{len(reference_rotated_flags)} rotated flag(s). The repository describes "
+        "60 components on a complete board. Verify the reference visually and in XML."
+    )
+else:
+    st.success(
+        "Reference XML has 60 components and no rotated flags. "
+        "This is a clean-reference candidate; verify it visually."
+    )
+
 if reference_image.shape[:2] != test_image.shape[:2]:
     test_image = cv2.resize(
         test_image,
@@ -832,6 +878,7 @@ if run_button:
             edge_threshold=edge_threshold,
             rotation_threshold=rotation_threshold,
             padding=padding,
+            enable_rotation_heuristic=enable_rotation_heuristic,
         )
 
         evaluation = evaluate_results(
@@ -896,8 +943,8 @@ if run_button:
     st.image(
         overlay,
         caption=(
-            "Green = normal; orange = rotation candidate; "
-            "red = suspected defect"
+            "Green = no strong change; orange = experimental rotation candidate; "
+            "red = missing candidate (heuristic); purple = appearance anomaly"
         ),
         use_container_width=True,
     )
@@ -1133,12 +1180,12 @@ if run_button:
         )
 
     st.caption(
-        "Important: this is an initial classical-image-processing "
-        "baseline. ROI comparison can confuse missing components, "
-        "rotation, illumination changes, and alignment errors. "
-        "Contour orientation is unreliable for symmetric components. "
-        "Tune parameters on development images and evaluate on "
-        "held-out images before reporting final performance."
+        "Important: this is an initial classical-image-processing baseline. "
+        "A missing candidate is based on low SSIM and a large changed-pixel ratio; "
+        "it may still be caused by alignment, lighting, or another appearance change. "
+        "Contour-based rotation detection is experimental and disabled by default. "
+        "Tune parameters on development images and evaluate on held-out images "
+        "before reporting final performance."
     )
 else:
     st.info(
