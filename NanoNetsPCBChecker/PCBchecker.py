@@ -65,13 +65,13 @@ def augmentLocData(dataPath):
 				imgCopy = copy.deepcopy(image)
 				imgCopy = cv2.rectangle(imgCopy, (xmin,ymin), (xmax,ymax), (0,0,255), 2)
 				snip = imgCopy[ymin-pad:ymax+pad,xmin-pad:xmax+pad,:]
-				fname = dataClfPath+'Original_'+xml.split('/')[-1].split('.xml')[0]+ '_'+ name + '_' + str(rot) + '.jpg'
+				fname = dataClfPath+'Original_'+os.path.splitext(os.path.basename(xml))[0]+ '_'+ name + '_' + str(rot) + '.jpg'
 				cv2.imwrite(fname, snip)
 				# imgCopy = cv2.rectangle(imgCopy1, (xmin,ymin), (xmax,ymax), (0,0,255), 2)
 		# fname1 = datapathAugmentedMarked+'Original_'+xml.split('/')[-1].split('xml')[0]+'jpg'
 		# cv2.imwrite(fname1, imgCopy1)
 		imgCopy2 = copy.deepcopy(image)
-		fname2 = datapathAugmented+'Original_'+xml.split('/')[-1].split('xml')[0]+'jpg'
+		fname2 = datapathAugmented+'Original_'+os.path.splitext(os.path.basename(xml))[0]+'.jpg'
 		cv2.imwrite(fname2, imgCopy2)
 		with open(fname2.split('jpg')[0]+'json', 'w') as outfile:
 			json.dump(gTruth, outfile)
@@ -95,13 +95,13 @@ def augmentLocData(dataPath):
 				imgCopy = copy.deepcopy(image)
 				imgCopy = cv2.rectangle(imgCopy, (xmin,ymin), (xmax,ymax), (0,0,255), 2)
 				snip = imgCopy[ymin-pad:ymax+pad,xmax-pad:xmin+pad,:]
-				fname = dataClfPath+'Hflip_'+xml.split('/')[-1].split('.xml')[0]+ '_'+ name + '_' + str(rot) + '.jpg'
+				fname = dataClfPath+'Hflip_'+os.path.splitext(os.path.basename(xml))[0]+ '_'+ name + '_' + str(rot) + '.jpg'
 				cv2.imwrite(fname, snip)
 				# imgCopy = cv2.rectangle(imgCopy1, (xmin,ymin), (xmax,ymax), (0,0,255), 2)			
 		# fname1 = datapathAugmentedMarked+'Hflip_'+xml.split('/')[-1].split('xml')[0]+'jpg'
 		# cv2.imwrite(fname1, imgCopy1)
 		imgCopy2 = copy.deepcopy(image)
-		fname2 = datapathAugmented+'Hflip_'+xml.split('/')[-1].split('xml')[0]+'jpg'
+		fname2 = datapathAugmented+'Hflip_'+os.path.splitext(os.path.basename(xml))[0]+'.jpg'
 		cv2.imwrite(fname2, imgCopy2)
 		with open(fname2.split('jpg')[0]+'json', 'w') as outfile:
 			json.dump(gTruth, outfile)
@@ -125,13 +125,13 @@ def augmentLocData(dataPath):
 				imgCopy = copy.deepcopy(image)
 				imgCopy = cv2.rectangle(imgCopy, (xmin,ymin), (xmax,ymax), (0,0,255), 2)
 				snip = imgCopy[ymax-pad:ymin+pad,xmin-pad:xmax+pad,:]
-				fname = dataClfPath+'Vflip_'+xml.split('/')[-1].split('.xml')[0]+ '_'+ name + '_' + str(rot) + '.jpg'
+				fname = dataClfPath+'Vflip_'+os.path.splitext(os.path.basename(xml))[0]+ '_'+ name + '_' + str(rot) + '.jpg'
 				cv2.imwrite(fname, snip)
 				# imgCopy = cv2.rectangle(imgCopy1, (xmin,ymin), (xmax,ymax), (0,0,255), 2)
 		# fname1 = datapathAugmentedMarked+'Vflip_'+xml.split('/')[-1].split('xml')[0]+'jpg'
 		# cv2.imwrite(fname1, imgCopy1)
 		imgCopy2 = copy.deepcopy(image)
-		fname2 = datapathAugmented+'Vflip_'+xml.split('/')[-1].split('xml')[0]+'jpg'
+		fname2 = datapathAugmented+'Vflip_'+os.path.splitext(os.path.basename(xml))[0]+'.jpg'
 		cv2.imwrite(fname2, imgCopy2)
 		with open(fname2.split('jpg')[0]+'json', 'w') as outfile:
 			json.dump(gTruth, outfile)
@@ -155,13 +155,13 @@ def augmentLocData(dataPath):
 				imgCopy = copy.deepcopy(image)
 				imgCopy = cv2.rectangle(imgCopy, (xmin,ymin), (xmax,ymax), (0,0,255), 2)
 				snip = imgCopy[ymax-pad:ymin+pad,xmax-pad:xmin+pad,:]
-				fname = dataClfPath+'HVflip_'+xml.split('/')[-1].split('.xml')[0]+ '_'+ name + '_' + str(rot) + '.jpg'
+				fname = dataClfPath+'HVflip_'+os.path.splitext(os.path.basename(xml))[0]+ '_'+ name + '_' + str(rot) + '.jpg'
 				cv2.imwrite(fname, snip)
 		# 		imgCopy = cv2.rectangle(imgCopy1, (xmin,ymin), (xmax,ymax), (0,0,255), 2)				
 		# fname1 = datapathAugmentedMarked+'HVflip_'+xml.split('/')[-1].split('xml')[0]+'jpg'
 		# cv2.imwrite(fname1, imgCopy1)
 		imgCopy2 = copy.deepcopy(image)
-		fname2 = datapathAugmented+'HVflip_'+xml.split('/')[-1].split('xml')[0]+'jpg'
+		fname2 = datapathAugmented+'HVflip_'+os.path.splitext(os.path.basename(xml))[0]+'.jpg'
 		cv2.imwrite(fname2, imgCopy2)
 		with open(fname2.split('jpg')[0]+'json', 'w') as outfile:
 			json.dump(gTruth, outfile)
@@ -186,13 +186,13 @@ def augmentLocData(dataPath):
 				imgCopy = copy.deepcopy(image)
 				imgCopy = cv2.rectangle(imgCopy, (ymin,xmin), (ymax,xmax), (0,0,255), 2)
 				snip = imgCopy[xmax-pad:xmin+pad,ymin-pad:ymax+pad,:]
-				fname = dataClfPath+'Rot90_'+xml.split('/')[-1].split('.xml')[0]+ '_'+ name + '_' + str(rot) + '.jpg'
+				fname = dataClfPath+'Rot90_'+os.path.splitext(os.path.basename(xml))[0]+ '_'+ name + '_' + str(rot) + '.jpg'
 				cv2.imwrite(fname, snip)
 		# 		imgCopy = cv2.rectangle(imgCopy1, (ymin,xmin), (ymax,xmax), (0,0,255), 2)
 		# fname1 = datapathAugmentedMarked+'Rot90_'+xml.split('/')[-1].split('xml')[0]+'jpg'
 		# cv2.imwrite(fname1, imgCopy1)
 		imgCopy2 = copy.deepcopy(image)
-		fname2 = datapathAugmented+'Rot90_'+xml.split('/')[-1].split('xml')[0]+'jpg'
+		fname2 = datapathAugmented+'Rot90_'+os.path.splitext(os.path.basename(xml))[0]+'.jpg'
 		cv2.imwrite(fname2, imgCopy2)
 		with open(fname2.split('jpg')[0]+'json', 'w') as outfile:
 			json.dump(gTruth, outfile)
@@ -218,13 +218,13 @@ def augmentLocData(dataPath):
 				imgCopy = copy.deepcopy(image)
 				imgCopy = cv2.rectangle(imgCopy, (ymin,xmin), (ymax,xmax), (0,0,255), 2)
 				snip = imgCopy[xmax-pad:xmin+pad,ymax-pad:ymin+pad,:]
-				fname = dataClfPath+'Rot90Hflip_'+xml.split('/')[-1].split('.xml')[0]+ '_'+ name + '_' + str(rot) + '.jpg'
+				fname = dataClfPath+'Rot90Hflip_'+os.path.splitext(os.path.basename(xml))[0]+ '_'+ name + '_' + str(rot) + '.jpg'
 				cv2.imwrite(fname, snip)
 		# 		imgCopy = cv2.rectangle(imgCopy1, (ymin,xmin), (ymax,xmax), (0,0,255), 2)
 		# fname1 = datapathAugmentedMarked+'Rot90HFlip_'+xml.split('/')[-1].split('xml')[0]+'jpg'
 		# cv2.imwrite(fname1, imgCopy1)
 		imgCopy2 = copy.deepcopy(image)
-		fname2 = datapathAugmented+'Rot90HFlip_'+xml.split('/')[-1].split('xml')[0]+'jpg'
+		fname2 = datapathAugmented+'Rot90HFlip_'+os.path.splitext(os.path.basename(xml))[0]+'.jpg'
 		cv2.imwrite(fname2, imgCopy2)
 		with open(fname2.split('jpg')[0]+'json', 'w') as outfile:
 			json.dump(gTruth, outfile)
@@ -250,13 +250,13 @@ def augmentLocData(dataPath):
 				imgCopy = copy.deepcopy(image)
 				imgCopy = cv2.rectangle(imgCopy, (ymin,xmin), (ymax,xmax), (0,0,255), 2)
 				snip = imgCopy[xmin-pad:xmax+pad,ymin-pad:ymax+pad,:]
-				fname = dataClfPath+'Rot90Vflip_'+xml.split('/')[-1].split('.xml')[0]+ '_'+ name + '_' + str(rot) + '.jpg'
+				fname = dataClfPath+'Rot90Vflip_'+os.path.splitext(os.path.basename(xml))[0]+ '_'+ name + '_' + str(rot) + '.jpg'
 				cv2.imwrite(fname, snip)
 		# 		imgCopy = cv2.rectangle(imgCopy1, (ymin,xmin), (ymax,xmax), (0,0,255), 2)
 		# fname1 = datapathAugmentedMarked+'Rot90VFlip_'+xml.split('/')[-1].split('xml')[0]+'jpg'
 		# cv2.imwrite(fname1, imgCopy1)
 		imgCopy2 = copy.deepcopy(image)
-		fname2 = datapathAugmented+'Rot90VFlip_'+xml.split('/')[-1].split('xml')[0]+'jpg'
+		fname2 = datapathAugmented+'Rot90VFlip_'+os.path.splitext(os.path.basename(xml))[0]+'.jpg'
 		cv2.imwrite(fname2, imgCopy2)
 		with open(fname2.split('jpg')[0]+'json', 'w') as outfile:
 			json.dump(gTruth, outfile)
