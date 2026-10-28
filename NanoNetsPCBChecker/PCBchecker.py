@@ -1,3 +1,5 @@
+from pyexpat import model
+
 import torch
 from PIL import Image
 import torchvision
@@ -19,6 +21,7 @@ import matplotlib.pyplot as plt
 from torchvision import transforms
 import time
 import sys
+from pyexpat import model
 
 dataPath = 'DLAssignment/'
 datapathAugmented = 'AugmentedData/'
@@ -35,8 +38,8 @@ detecterModelTrained = modelsPath+'Augdetector_final.pth'
 classifierModelTrained = modelsPath+'classifier_best.pth'
 num_epochs_detector = 100
 num_epochs_classifier = 100
-device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
-
+#device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 def augmentLocData(dataPath):
 	print ('Augmenting Given data ...')
@@ -381,7 +384,10 @@ def objectDetectorArgs(train=True):
 		num_classes = len(sorted(set(json.load(json_file).values()))) + 1 # 1 class (person) + background
 		in_features = model.roi_heads.box_predictor.cls_score.in_features
 		model.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes)
-		model.load_state_dict(torch.load(detecterModelTrained))
+		#model.load_state_dict(torch.load(detecterModelTrained))
+		model.load_state_dict(
+			torch.load(detecterModelTrained, map_location=torch.device('cpu'))
+		)
 		model.to(device)
 		model.eval()
 		return model
@@ -437,7 +443,13 @@ def objectClassifierArgs(train=True):
 		compList = jsonData.keys()
 		# model_ft.fc = torch.nn.Linear(num_ftrs, len(compList)*2)
 		model_ft.classifier[6] = torch.nn.Linear(num_ftrs, len(compList)*2)
-		model_ft.load_state_dict(torch.load(classifierModelTrained))
+		model_ft.load_state_dict(
+			torch.load(
+				classifierModelTrained,
+				map_location=device,
+				weights_only=True
+			)
+		)
 		model_ft = model_ft.to(device)
 		model_ft.eval()
 		return model_ft
