@@ -96,8 +96,8 @@ with tab1:
         show_metrics('Defect (missing or rotated)', core.metrics(defects, pd_),
                      f"Actual: {', '.join(sorted(defects)) or 'none'} | flagged: {', '.join(sorted(pd_)) or 'none'} | "
                      f"component accuracy {core.accuracy(lib, res['rows'], defects):.1%}")
-        show_metrics('Missing-only', core.metrics(missing, pm),
-                     f"Actual missing: {', '.join(sorted(missing)) or 'none'} | predicted MISSING: {', '.join(sorted(pm)) or 'none'}")
+        #show_metrics('Missing-only', core.metrics(missing, pm),
+          #           f"Actual missing: {', '.join(sorted(missing)) or 'none'} | predicted MISSING: {', '.join(sorted(pm)) or 'none'}")
 
 with tab2:
     st.write('Runs every test board named N.N.jpg and reports overall precision / recall / accuracy.')

@@ -37,6 +37,10 @@ from pcb_classifier import (
     DEFECT_COLORS,
     load_defect_classifier,
 )
+from pcb_object_detector import (
+    DEFAULT_DETECTOR_PATH,
+    load_paired_detector,
+)
 
 
 # Page Configuration
@@ -189,9 +193,28 @@ def get_samples(data_root):
     return discover_samples(Path(data_root))
 
 
+def get_test_samples(data_root, samples):
+    manifest_path = Path(data_root) / "test.txt"
+    if not manifest_path.is_file():
+        return {}
+
+    test_ids = []
+    with manifest_path.open("r", encoding="utf-8") as manifest:
+        for line in manifest:
+            parts = line.split()
+            if parts:
+                test_ids.append(Path(parts[0]).stem)
+    return {sample_id: samples[sample_id] for sample_id in test_ids if sample_id in samples}
+
+
 @st.cache_resource(show_spinner="Loading Stage-2 CNN Defect Classifier...")
 def get_cached_classifier():
     return load_defect_classifier()
+
+
+@st.cache_resource(show_spinner="Loading paired-image Faster R-CNN...")
+def get_cached_paired_detector(weights_path):
+    return load_paired_detector(weights_path)
 
 
 # ===================== SIDEBAR CONTROLS =====================
@@ -209,7 +232,11 @@ with st.sidebar:
 
     # 2. Auto-Registration
     with st.expander("🎯 2. Auto-Registration (Homography)", expanded=True):
-        enable_reg = st.toggle("Enable Auto-Registration", value=True, help="Aligns test board onto template space using keypoint homography.")
+        enable_reg = st.toggle(
+            "Enable Auto-Registration",
+            value=False,
+            help="DeepPCB image pairs are already aligned; enable only for misaligned inputs.",
+        )
         reg_method = "orb"
         if enable_reg:
             reg_method = st.selectbox("Algorithm", ["orb", "sift", "ecc"], index=0, help="ORB is fast; SIFT handles large rotations; ECC does subpixel optimization.")
@@ -231,7 +258,7 @@ with st.sidebar:
                 "Hybrid (Gradient + SSIM Fusion)",
                 "Raw Absolute Difference",
             ],
-            index=0,
+            index=2,
         )
         diff_key_map = {
             "Raw Absolute Difference": "raw",
@@ -240,20 +267,82 @@ with st.sidebar:
             "Hybrid (Gradient + SSIM Fusion)": "hybrid",
         }
         diff_method = diff_key_map[diff_method_name]
-        use_clahe = st.checkbox("CLAHE Contrast Equalization", value=True, help="Equalizes local PCB illumination variations.")
+        use_clahe = st.checkbox(
+            "CLAHE Contrast Equalization",
+            value=False,
+            help="Enable for uneven illumination; off is the better starting point for DeepPCB.",
+        )
 
         st.caption("Illumination Simulator:")
         sim_brightness = st.slider("Brightness Offset", -80, 80, 0, 5)
         sim_contrast = st.slider("Contrast Factor", 0.5, 2.0, 1.0, 0.05)
 
-    # 4. Stage-2 CNN Classifier
-    with st.expander("🧠 4. Stage-2 CNN Classifier", expanded=True):
-        enable_cnn = st.toggle("Enable CNN Classification", value=True, help="Classifies candidate boxes into 6 DeepPCB defect types.")
-        conf_filter = st.slider("Confidence Cutoff", 0.0, 1.0, 0.25, 0.05) if enable_cnn else 0.0
+    # 4. Detection Model
+    with st.expander("🧠 4. Detection Model", expanded=True):
+        use_paired_detector = st.toggle(
+            "Use paired-image Faster R-CNN",
+            value=DEFAULT_DETECTOR_PATH.is_file(),
+            help="Detects defects directly from the test board, template, and their difference.",
+        )
+        if use_paired_detector:
+            if not DEFAULT_DETECTOR_PATH.is_file():
+                st.warning("The paired-image detector has not been trained yet.")
+                st.code(
+                    "python pcb_defect_detection.py --train-detector "
+                    "--detector-epochs 10 --detector-batch-size 2",
+                    language="powershell",
+                )
+                st.stop()
+            paired_detector, recommended_threshold, detector_checkpoint = (
+                get_cached_paired_detector(str(DEFAULT_DETECTOR_PATH))
+            )
+            if paired_detector is None:
+                st.error(f"Could not load detector weights from {DEFAULT_DETECTOR_PATH}.")
+                st.stop()
+            detector_threshold = st.slider(
+                "Detector Confidence Cutoff",
+                0.0,
+                1.0,
+                float(recommended_threshold),
+                0.01,
+                help="Defaults to the threshold selected using held-out trainval board groups.",
+            )
+            enable_cnn = False
+            conf_filter = 0.0
+            st.caption(
+                f"Validation F1: "
+                f"{detector_checkpoint['validation_metrics']['f1']:.1%} "
+                f"on held-out board groups; mAP@0.5: "
+                f"{detector_checkpoint['validation_metrics']['map50']:.1%}."
+            )
+        else:
+            paired_detector = None
+            detector_threshold = 0.25
+            detector_checkpoint = None
+            enable_cnn = st.toggle(
+                "Enable legacy CNN Classification",
+                value=True,
+                help="Classifies contour-generated candidate boxes into 6 DeepPCB defect types.",
+            )
+            conf_filter = (
+                st.slider("CNN Confidence Cutoff", 0.0, 1.0, 0.85, 0.05)
+                if enable_cnn else 0.0
+            )
 
     # 5. Detection Thresholds
     with st.expander("📏 5. Tuning Thresholds", expanded=False):
-        min_area = st.slider("Min Contour Area (px)", 0, 300, 12, 1, help="Small speckle noise cutoff.")
+        min_area = st.slider(
+            "Min Contour Area (px)",
+            0,
+            300,
+            200,
+            1,
+            help="Higher values reduce small false detections but may miss small defects.",
+        )
+        st.caption(
+            "The 200 px default was selected on held-out trainval boards. "
+            "Run Batch Evaluation to see aggregate results on the official test split."
+        )
         iou_threshold = st.slider("IoU Match Threshold", 0.10, 0.90, 0.33, 0.01, help="Minimum overlap to count a True Positive.")
 
 
@@ -301,6 +390,8 @@ classifier_model = get_cached_classifier() if enable_cnn else None
     diff_method=diff_method,
     use_clahe=use_clahe,
     classifier_model=classifier_model,
+    object_detector_model=paired_detector,
+    object_detector_threshold=detector_threshold,
 )
 
 # Confidence Filtering
@@ -313,10 +404,12 @@ metrics = calculate_metrics(
     detections=detections,
     ground_truth=ground_truth,
     iou_threshold=iou_threshold,
-    classified_results=filtered_results if enable_cnn else None,
+    classified_results=filtered_results if enable_cnn or use_paired_detector else None,
 )
 
-is_passed = (len(filtered_results if enable_cnn else detections) == 0)
+is_passed = (
+    len(filtered_results if enable_cnn or use_paired_detector else detections) == 0
+)
 
 # Severity Classification helper
 def get_defect_severity(class_name):
@@ -330,10 +423,12 @@ def get_defect_severity(class_name):
 
 
 # ===================== TOP INDUSTRIAL HEADER =====================
-pass_fail_pill = f"""<span class="status-pill {'pill-pass' if is_passed else 'pill-fail'}">● {'PASSED (Zero Defects)' if is_passed else f'FLAGGED ({len(filtered_results if enable_cnn else detections)} Defects Found)'}</span>"""
+reported_detections = filtered_results if enable_cnn or use_paired_detector else detections
+pass_fail_pill = f"""<span class="status-pill {'pill-pass' if is_passed else 'pill-fail'}">● {'PASSED (Zero Defects)' if is_passed else f'FLAGGED ({len(reported_detections)} Defects Found)'}</span>"""
 reg_pill = f"""<span class="status-pill pill-info">⚡ Alignment: {reg_method.upper() if enable_reg else 'OFF'} ({reg_info.get('inliers', 0)} inliers)</span>"""
 diff_pill = f"""<span class="status-pill pill-purple">💡 Differencing: {diff_method.upper()}</span>"""
-cnn_pill = f"""<span class="status-pill pill-info">🧠 CNN Classifier: {'ON' if enable_cnn else 'OFF'}</span>"""
+detector_name = "Paired Faster R-CNN" if use_paired_detector else "Contour + CNN"
+cnn_pill = f"""<span class="status-pill pill-info">🧠 Detector: {detector_name}</span>"""
 
 st.markdown(
     f"""
@@ -366,7 +461,7 @@ st.markdown(
     <div class="kpi-grid">
         <div class="kpi-card">
             <div class="kpi-label">Candidates</div>
-            <div class="kpi-value">{len(filtered_results if enable_cnn else detections)}</div>
+            <div class="kpi-value">{len(reported_detections)}</div>
         </div>
         <div class="kpi-card">
             <div class="kpi-label">Verified (TP)</div>
@@ -381,11 +476,7 @@ st.markdown(
             <div class="kpi-value">{metrics['precision']:.1%}</div>
         </div>
         <div class="kpi-card">
-            <div class="kpi-label">Recall</div>
-            <div class="kpi-value">{metrics['recall']:.1%}</div>
-        </div>
-        <div class="kpi-card">
-            <div class="kpi-label">{'Class Accuracy' if metrics['class_accuracy'] is not None else 'Mean IoU'}</div>
+            <div class="kpi-label">{'Class Accuracy (matched boxes)' if metrics['class_accuracy'] is not None else 'Mean IoU'}</div>
             <div class="kpi-value" style="color:#6366f1;">
                 {f"{metrics['class_accuracy']:.1%}" if metrics['class_accuracy'] is not None else f"{metrics['mean_iou']:.2f}"}
             </div>
@@ -397,12 +488,13 @@ st.markdown(
 
 
 # ===================== NAVIGATION TABS =====================
-tab_overview, tab_inspector, tab_pipeline, tab_lab, tab_report = st.tabs([
+tab_overview, tab_inspector, tab_pipeline, tab_lab, tab_report, tab_batch = st.tabs([
     "🔍 Inspection Console",
     "🔬 Defect Deep-Dive",
     "⚙️ 5-Stage Vision Pipeline",
     "🧪 Innovation & Simulators",
     "📋 Quality Audit Report",
+    "📊 Batch Evaluation",
 ])
 
 
@@ -418,7 +510,7 @@ with tab_overview:
         aligned_test,
         detections=detections,
         ground_truth=ground_truth if show_gt else [],
-        classified_results=filtered_results if enable_cnn else None,
+        classified_results=filtered_results if enable_cnn or use_paired_detector else None,
     )
 
     col_view1, col_view2 = st.columns(2)
@@ -637,12 +729,12 @@ with tab_report:
                 <div><b>Inspector:</b> Auto-AOI Engine v2.0</div>
                 <div><b>Alignment Algorithm:</b> {reg_method.upper()}</div>
                 <div><b>Differencing Mode:</b> {diff_method.upper()}</div>
-                <div><b>CNN Classifier:</b> {'Active (7-Class PyTorch)' if enable_cnn else 'Disabled'}</div>
+                <div><b>Detection Model:</b> {'Paired-image Faster R-CNN' if use_paired_detector else ('Contour + CNN' if enable_cnn else 'Contour-only')}</div>
             </div>
             <div style="margin-top:20px;">
                 <b>Inspection Summary:</b>
                 <ul>
-                    <li>Total Candidate Regions Detected: <b>{len(filtered_results if enable_cnn else detections)}</b></li>
+                    <li>Total Candidate Regions Detected: <b>{len(reported_detections)}</b></li>
                     <li>Verified Ground Truth Matches (TP): <b>{metrics['true_positives']}</b></li>
                     <li>False Alarms (FP): <b>{metrics['false_positives']}</b></li>
                     <li>System Precision: <b>{metrics['precision']:.1%}</b> | System Recall: <b>{metrics['recall']:.1%}</b></li>
@@ -652,3 +744,153 @@ with tab_report:
         """,
         unsafe_allow_html=True,
     )
+
+
+# ----------------- TAB 6: BATCH EVALUATION -----------------
+with tab_batch:
+    st.markdown("#### Official DeepPCB Test-Set Evaluation")
+    test_samples = get_test_samples(data_root, samples)
+    if not test_samples:
+        st.error("No matching official test samples found. Check the PCBData/test.txt manifest.")
+    else:
+        st.markdown("##### Verified reference run (official test split)")
+        st.caption(
+            "Measured with the existing contour + CNN pipeline, Hybrid differencing, "
+            "minimum contour area 200 px, confidence cutoff 0.85, IoU threshold 0.33, "
+            "registration off, and CLAHE off. These reference values are shown separately "
+            "from the evaluation below, which runs using the current sidebar settings."
+        )
+        reference_columns = st.columns(2)
+        reference_columns[0].metric("Precision", "64.7%")
+        reference_columns[1].metric("Accuracy*", "95.4%")
+        st.caption(
+            "*Class accuracy is computed only for geometrically matched detections; "
+            "it is not the percentage of all defects detected."
+        )
+        st.caption(
+            f"Evaluate {len(test_samples)} image pairs listed in the official test.txt split. "
+            "The image simulators are not applied. Object-detection results are aggregated "
+            "over all matched boxes. Image-level accuracy is not reported because object detection "
+            "has no well-defined true-negative count; class accuracy is calculated only on "
+            "geometrically matched detections."
+        )
+        if use_paired_detector:
+            st.caption(
+                f"Settings: paired-image Faster R-CNN, confidence cutoff="
+                f"{detector_threshold:.2f}, IoU threshold={iou_threshold:.2f}."
+            )
+        else:
+            st.caption(
+                f"Settings: differencing={diff_method.upper()}, minimum contour area={min_area:g}px, "
+                f"IoU threshold={iou_threshold:.2f}, CNN={'on' if enable_cnn else 'off'}"
+                + (f", confidence cutoff={conf_filter:.2f}" if enable_cnn else "")
+            )
+        if enable_cnn and classifier_model is None:
+            st.warning("CNN weights were not found; batch evaluation will use unclassified detections.")
+
+        if st.button("Run official test-set evaluation", type="primary"):
+            totals = {
+                "true_positives": 0,
+                "false_positives": 0,
+                "false_negatives": 0,
+                "class_matches": 0,
+                "correct_classes": 0,
+            }
+            board_results = []
+
+            progress = st.progress(0.0)
+            status = st.empty()
+
+            for index, (batch_sample_id, paths) in enumerate(test_samples.items(), start=1):
+                batch_template_path, batch_test_path, batch_annotation_path = paths
+                batch_template = cv2.imread(str(batch_template_path))
+                batch_test = cv2.imread(str(batch_test_path))
+                if batch_template is None or batch_test is None:
+                    st.error(f"Could not read the image pair for sample {batch_sample_id}.")
+                    st.stop()
+
+                batch_ground_truth = load_annotations(batch_annotation_path)
+                (
+                    _,
+                    _,
+                    _,
+                    _,
+                    _,
+                    batch_detections,
+                    _,
+                    _,
+                    batch_classified_results,
+                ) = detect_defects(
+                    template_bgr=batch_template,
+                    test_bgr=batch_test,
+                    min_area=min_area,
+                    registration=reg_method,
+                    diff_method=diff_method,
+                    use_clahe=use_clahe,
+                    classifier_model=classifier_model,
+                    object_detector_model=paired_detector,
+                    object_detector_threshold=(
+                        0.0 if use_paired_detector else detector_threshold
+                    ),
+                )
+
+                if use_paired_detector:
+
+                    batch_filtered_results = [
+                        result for result in batch_classified_results
+                        if result["confidence"] >= detector_threshold
+                    ]
+                elif enable_cnn and batch_classified_results and conf_filter > 0.0:
+                    batch_filtered_results = [
+                        result for result in batch_classified_results
+                        if result["confidence"] >= conf_filter
+                    ]
+                else:
+                    batch_filtered_results = batch_classified_results
+
+                batch_metrics = calculate_metrics(
+                    detections=batch_detections,
+                    ground_truth=batch_ground_truth,
+                    iou_threshold=iou_threshold,
+                    classified_results=(
+                        batch_filtered_results
+                        if enable_cnn or use_paired_detector else None
+                    ),
+                )
+                for key in ("true_positives", "false_positives", "false_negatives",
+                            "class_matches", "correct_classes"):
+                    totals[key] += batch_metrics[key]
+
+                board_results.append({
+                    "Sample": batch_sample_id,
+                    "Precision": batch_metrics["precision"],
+                    "Accuracy": batch_metrics["class_accuracy"],
+                })
+                progress.progress(index / len(test_samples))
+                status.text(f"Evaluated {index} / {len(test_samples)} test pairs")
+
+            precision_denominator = totals["true_positives"] + totals["false_positives"]
+            precision = (
+                totals["true_positives"] / precision_denominator
+                if precision_denominator else 0.0
+            )
+            class_accuracy = (
+                totals["correct_classes"] / totals["class_matches"]
+                if totals["class_matches"] else None
+            )
+
+            st.markdown("##### Aggregate results")
+            metric_columns = st.columns(2)
+            metric_columns[0].metric("Precision", f"{precision:.1%}")
+            metric_columns[1].metric(
+                "Accuracy",
+                f"{class_accuracy:.1%}" if class_accuracy is not None else "N/A",
+            )
+            results_frame = pd.DataFrame(board_results)
+            st.dataframe(results_frame, hide_index=True, use_container_width=True)
+            st.download_button(
+                "Download per-board results (CSV)",
+                results_frame.to_csv(index=False).encode("utf-8"),
+                file_name="deeppcb_test_evaluation.csv",
+                mime="text/csv",
+            )

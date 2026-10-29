@@ -3,7 +3,7 @@
 Features:
 1. Automatic Image Registration (ORB, SIFT, ECC)
 2. Illumination-Invariant Differencing (Sobel Gradient, SSIM Structural, Hybrid, CLAHE)
-3. Two-Stage Hybrid Detection (Classical Candidate Proposals + Stage-2 CNN Classification)
+3. DeepPCB Detection (contour/CNN baseline or paired-image Faster R-CNN)
 """
 
 import argparse
@@ -82,6 +82,8 @@ def detect_defects(
     diff_method="raw",
     use_clahe=False,
     classifier_model=None,
+    object_detector_model=None,
+    object_detector_threshold=0.25,
 ):
     """Full PCB defect detection pipeline.
     
@@ -89,8 +91,8 @@ def detect_defects(
     2. Light smoothing and optional CLAHE.
     3. Illumination-invariant differencing (raw, gradient, SSIM, hybrid).
     4. Otsu thresholding + morphological opening/closing.
-    5. External contour extraction -> candidate RoI bounding boxes.
-    6. Stage-2 CNN classification into specific defect types.
+    5. Generate candidate boxes from contours or the paired-image object detector.
+    6. Classify contour candidates when using the legacy hybrid pipeline.
     """
     # Step 1: Automatic Registration
     if registration and registration.lower() != "none":
@@ -125,19 +127,38 @@ def detect_defects(
     cleaned = cv2.morphologyEx(thresholded, cv2.MORPH_OPEN, kernel)
     cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_CLOSE, kernel)
 
-    # Step 5: External Contours -> Bounding Boxes
+    # Step 5: Candidate boxes from contours or the trained paired-image detector.
     contours, _ = cv2.findContours(cleaned, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    detections = []
-    for contour in contours:
-        if cv2.contourArea(contour) < min_area:
-            continue
-        x, y, width, height = cv2.boundingRect(contour)
-        detections.append((x, y, x + width, y + height))
+    if object_detector_model is not None:
+        from pcb_object_detector import predict_paired_image
 
-    # Step 6: Stage 2 CNN Classification
-    classified_results = classify_detections(
-        test_smooth, template_smooth, difference, detections, model=classifier_model
-    )
+        template_detector_input = (
+            cv2.cvtColor(template_bgr, cv2.COLOR_BGR2GRAY)
+            if template_bgr.ndim == 3 else template_bgr
+        )
+        test_detector_input = (
+            cv2.cvtColor(aligned_test, cv2.COLOR_BGR2GRAY)
+            if aligned_test.ndim == 3 else aligned_test
+        )
+        classified_results = predict_paired_image(
+            object_detector_model,
+            template_detector_input,
+            test_detector_input,
+            confidence_threshold=object_detector_threshold,
+        )
+        detections = [item["box"] for item in classified_results]
+    else:
+        detections = []
+        for contour in contours:
+            if cv2.contourArea(contour) < min_area:
+                continue
+            x, y, width, height = cv2.boundingRect(contour)
+            detections.append((x, y, x + width, y + height))
+
+        # Step 6: Stage 2 CNN Classification for contour proposals.
+        classified_results = classify_detections(
+            test_smooth, template_smooth, difference, detections, model=classifier_model
+        )
 
     return (
         template_smooth,
@@ -172,7 +193,7 @@ def calculate_metrics(detections, ground_truth, iou_threshold=0.33, classified_r
 
     det_boxes = []
     det_classes = []
-    if classified_results:
+    if classified_results is not None:
         for res in classified_results:
             det_boxes.append(res["box"])
             det_classes.append(res["class_id"])
@@ -181,25 +202,45 @@ def calculate_metrics(detections, ground_truth, iou_threshold=0.33, classified_r
         det_classes = [None] * len(det_boxes)
 
     candidates = []
+    geometric_candidates = []
     for d_idx, d_box in enumerate(det_boxes):
         for t_idx, t_box in enumerate(gt_boxes):
             overlap = box_iou(d_box, t_box)
-            if overlap >= iou_threshold:
-                candidates.append((overlap, d_idx, t_idx))
+            if overlap < iou_threshold:
+                continue
+            geometric_candidates.append((overlap, d_idx, t_idx))
+            if (
+                det_classes[d_idx] is not None
+                and gt_classes[t_idx] is not None
+                and det_classes[d_idx] != gt_classes[t_idx]
+            ):
+                continue
+            candidates.append((overlap, d_idx, t_idx))
 
     matched_detections = set()
     matched_truth = set()
     matched_ious = []
-    class_correct = 0
-
     for overlap, d_idx, t_idx in sorted(candidates, reverse=True):
         if d_idx not in matched_detections and t_idx not in matched_truth:
             matched_detections.add(d_idx)
             matched_truth.add(t_idx)
             matched_ious.append(overlap)
-            if det_classes[d_idx] is not None and gt_classes[t_idx] is not None:
-                if det_classes[d_idx] == gt_classes[t_idx]:
-                    class_correct += 1
+
+    class_correct = 0
+    geometric_matches = 0
+    geometric_detections = set()
+    geometric_truth = set()
+    for _, d_idx, t_idx in sorted(geometric_candidates, reverse=True):
+        if d_idx not in geometric_detections and t_idx not in geometric_truth:
+            geometric_detections.add(d_idx)
+            geometric_truth.add(t_idx)
+            geometric_matches += 1
+            if (
+                det_classes[d_idx] is not None
+                and gt_classes[t_idx] is not None
+                and det_classes[d_idx] == gt_classes[t_idx]
+            ):
+                class_correct += 1
 
     true_positives = len(matched_detections)
     false_positives = len(det_boxes) - true_positives
@@ -207,7 +248,11 @@ def calculate_metrics(detections, ground_truth, iou_threshold=0.33, classified_r
     precision = true_positives / (true_positives + false_positives) if det_boxes else 0.0
     recall = true_positives / (true_positives + false_negatives) if gt_boxes else 0.0
     mean_iou = sum(matched_ious) / true_positives if true_positives else 0.0
-    class_accuracy = class_correct / true_positives if true_positives and any(c is not None for c in det_classes) else None
+    class_accuracy = (
+        class_correct / geometric_matches
+        if geometric_matches and any(c is not None for c in det_classes)
+        else None
+    )
 
     return {
         "true_positives": true_positives,
@@ -217,6 +262,8 @@ def calculate_metrics(detections, ground_truth, iou_threshold=0.33, classified_r
         "recall": recall,
         "mean_iou": mean_iou,
         "class_accuracy": class_accuracy,
+        "class_matches": geometric_matches,
+        "correct_classes": class_correct,
         "matched_detections": matched_detections,
         "matched_truth": matched_truth,
     }
@@ -302,6 +349,30 @@ def main():
     parser.add_argument("--clahe", action="store_true", help="Apply CLAHE contrast equalization before differencing.")
     parser.add_argument("--classify", action="store_true", help="Enable Stage-2 lightweight CNN defect classification.")
     parser.add_argument("--train-classifier", action="store_true", help="Train the CNN classifier on dataset patches.")
+    parser.add_argument(
+        "--train-detector",
+        action="store_true",
+        help="Train the paired-image Faster R-CNN on trainval.txt with group-wise validation.",
+    )
+    parser.add_argument("--detector", action="store_true", help="Use the trained paired-image Faster R-CNN.")
+    parser.add_argument("--detector-epochs", type=int, default=10, help="Paired detector training epochs.")
+    parser.add_argument("--detector-batch-size", type=int, default=2, help="Paired detector training batch size.")
+    parser.add_argument(
+        "--max-training-pairs",
+        type=int,
+        help="Optional limit for a quick training diagnostic; omit to use all trainval pairs.",
+    )
+    parser.add_argument(
+        "--max-validation-pairs",
+        type=int,
+        help="Optional limit for a quick diagnostic; omit to validate on the complete held-out group.",
+    )
+    parser.add_argument(
+        "--detector-output",
+        type=Path,
+        default=Path(__file__).resolve().parent / "models" / "deeppcb_fasterrcnn.pth",
+        help="Output checkpoint path for paired detector training.",
+    )
     parser.add_argument("--simulate-misalignment", action="store_true",
                         help="Add synthetic shift and rotation to test auto-registration.")
     parser.add_argument("--simulate-lighting", action="store_true",
@@ -313,6 +384,22 @@ def main():
         print("Training LightweightDefectCNN on dataset...")
         train_classifier(args.data_root)
         return
+    if args.train_detector:
+        from pcb_object_detector import train_paired_detector
+
+        if args.detector_epochs < 1 or args.detector_batch_size < 1:
+            parser.error("--detector-epochs and --detector-batch-size must be positive.")
+        train_paired_detector(
+            args.data_root,
+            epochs=args.detector_epochs,
+            batch_size=args.detector_batch_size,
+            max_pairs=args.max_training_pairs,
+            max_validation_pairs=args.max_validation_pairs,
+            save_path=args.detector_output,
+        )
+        return
+    if args.detector and args.classify:
+        parser.error("--detector and --classify are separate detection modes; choose one.")
 
     if not args.data_root.is_dir():
         parser.error(f"Dataset folder not found: {args.data_root}")
@@ -350,10 +437,19 @@ def main():
 
     # Optional CNN classifier
     classifier_model = None
+    object_detector_model = None
+    detector_threshold = 0.25
     if args.classify:
         classifier_model = load_defect_classifier()
         if classifier_model is None:
             print("[Warning] Trained classifier weights not found. Run with --train-classifier first.")
+    if args.detector:
+        from pcb_object_detector import load_paired_detector
+
+        object_detector_model, loaded_threshold, _ = load_paired_detector()
+        if object_detector_model is None:
+            parser.error("Paired detector weights not found. Run with --train-detector first.")
+        detector_threshold = loaded_threshold
 
     ground_truth = load_annotations(annotation_path)
 
@@ -375,13 +471,15 @@ def main():
         diff_method=args.diff_method,
         use_clahe=args.clahe,
         classifier_model=classifier_model,
+        object_detector_model=object_detector_model,
+        object_detector_threshold=detector_threshold,
     )
 
     metrics = calculate_metrics(
         detections=detections,
         ground_truth=ground_truth,
         iou_threshold=args.iou_threshold,
-        classified_results=classified_results if args.classify else None,
+        classified_results=classified_results if args.classify or args.detector else None,
     )
 
     print("\n" + "=" * 55)
@@ -389,6 +487,9 @@ def main():
     print(f"Registration Method:    {args.registration.upper()} (Inliers: {reg_info.get('inliers', 0)})")
     print(f"Differencing Engine:    {args.diff_method.upper()} (CLAHE: {args.clahe})")
     print(f"CNN Classifier Enabled: {args.classify}")
+    print(f"Paired Faster R-CNN Enabled: {args.detector}")
+    if args.detector:
+        print(f"Detector Confidence Threshold: {detector_threshold:.2f}")
     print(f"Detected Regions:       {len(detections)}")
     print(f"Ground Truth Labels:    {len(ground_truth)}")
     print(f"True Positives (TP):    {metrics['true_positives']}")
@@ -411,7 +512,7 @@ def main():
         aligned_test,
         detections=detections,
         ground_truth=ground_truth,
-        classified_results=classified_results if args.classify else None,
+        classified_results=classified_results if args.classify or args.detector else None,
     )
 
     display_results(

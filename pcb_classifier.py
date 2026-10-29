@@ -183,7 +183,6 @@ def extract_training_dataset(samples, max_pairs=300):
         diff_img = cv2.absdiff(temp_img, test_img)
         h, w = test_img.shape[:2]
 
-        # Read annotations
         defect_boxes = []
         with open(ann_path, "r", encoding="utf-8") as f:
             for line in f:
@@ -192,19 +191,16 @@ def extract_training_dataset(samples, max_pairs=300):
                     x1, y1, x2, y2, cid = map(int, parts[:5])
                     defect_boxes.append((x1, y1, x2, y2, cid))
 
-        # Extract positive defect crops
         for x1, y1, x2, y2, cid in defect_boxes:
             if cid in DEFECT_CLASSES:
                 patch = crop_roi_patch(test_img, temp_img, diff_img, (x1, y1, x2, y2))
                 patches.append(patch)
                 labels.append(cid)
 
-        # Extract negative normal/background crops
         for _ in range(max(1, len(defect_boxes) // 2)):
             rx = random.randint(30, max(31, w - 70))
             ry = random.randint(30, max(31, h - 70))
             bg_box = (rx, ry, rx + 40, ry + 40)
-            # Ensure no overlap with any defect box
             overlap = False
             for dx1, dy1, dx2, dy2, _ in defect_boxes:
                 if not (bg_box[2] < dx1 or bg_box[0] > dx2 or bg_box[3] < dy1 or bg_box[1] > dy2):
@@ -225,6 +221,20 @@ def train_classifier(data_root, max_pairs=350, epochs=8, batch_size=64, lr=1e-3,
     if not samples:
         raise ValueError(f"No samples found in {data_root}")
 
+    train_manifest = Path(data_root) / "trainval.txt"
+    if train_manifest.is_file():
+        train_ids = set()
+        with train_manifest.open("r", encoding="utf-8") as manifest:
+            for line in manifest:
+                parts = line.split()
+                if parts:
+                    train_ids.add(Path(parts[0]).stem)
+        samples = {sample_id: pair for sample_id, pair in samples.items() if sample_id in train_ids}
+        if not samples:
+            raise ValueError(f"No discovered samples match the training split in {train_manifest}")
+
+    pair_ids = list(samples)
+    random.Random(42).shuffle(pair_ids)
     print(f"Extracting patches from {min(len(samples), max_pairs)} image pairs...")
     x_data, y_data = extract_training_dataset(samples, max_pairs=max_pairs)
     print(f"Dataset extracted: {len(x_data)} patches total.")
@@ -233,7 +243,7 @@ def train_classifier(data_root, max_pairs=350, epochs=8, batch_size=64, lr=1e-3,
     class_counts = np.bincount(y_data, minlength=7)
     weights = np.zeros(7, dtype=np.float32)
     for c in range(7):
-        weights[c] = (len(y_data) / (7.0 * max(1, class_counts[c])))
+        weights[c] = len(y_data) / (7.0 * max(1, class_counts[c]))
     class_weights_t = torch.tensor(weights, dtype=torch.float32)
 
     # Train / Val split
